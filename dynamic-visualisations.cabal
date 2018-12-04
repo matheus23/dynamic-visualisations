@@ -1,0 +1,33 @@
+name:                dynamic-visualisations
+version:             0.1.0.0
+synopsis:            Initial project template from stack
+description:         Please see README.md
+homepage:            https://github.com/matheus23/dynamic-visualisations#readme
+license:             BSD3
+license-file:        LICENSE
+author:              Philipp Krüger
+maintainer:          philipp.krueger1@gmail.com
+copyright:           2016-2018 Philipp Krüger
+category:            Web
+build-type:          Simple
+-- extra-source-files:
+cabal-version:       >=1.10
+
+executable dynamic-visualisations
+  hs-source-dirs:      src
+  other-modules:       Widgets.Type
+                     , Widgets.Expression
+                     , Widgets.Record
+                     , Backend
+  main-is:             Main.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , lens
+                     , linear
+                     , containers
+                     , recursion-schemes
+                     , DeclarativeGraphics
+                     , DeclarativeGraphics-Cairo
+                     , DeclarativeGraphics-SDL
+                     , Reactives
+  default-language:    Haskell2010

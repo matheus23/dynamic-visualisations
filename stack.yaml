@@ -1,0 +1,9 @@
+flags: {}
+packages:
+- .
+extra-deps:
+- ../DeclarativeGraphics
+- ../DeclarativeGraphics-Cairo
+- ../DeclarativeGraphics-SDL
+- ../Reactives
+resolver: lts-12.19
