@@ -5,6 +5,7 @@
 
 * combine multiple points to a circle/rectangle, etc.
     * First only allow combining 2 points, then allow combining more than that to paths/shapes, etc.
+        * ~~How do we decide what can be selected? I want a general picking mechanism!~~ DONE. Implemented it using something similar to `Reactive (V2 Double) Focus`. Now I can represent my selection as `[Focus]`.
     * If the user can choose, show him a dropdown at mouse position similar to how it works in blender!
 
 * Make it recursive! Allow lets in lets
@@ -13,6 +14,7 @@
 
 * Build more visualisation types!
     * visualize more than vectors and forms: lists, numbers, strings, reactives, everything!
+    * Try to build PGA (Projective geometric algebra) type stuff! Distinguish vectors and points and rotations! aw yiss
 
 * Build types!
     * Make suggestions based on types!

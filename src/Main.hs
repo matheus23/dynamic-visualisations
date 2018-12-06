@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 module Main where
 
@@ -21,60 +22,87 @@ import Utils (orElse, isInside, orTry, rightAngle)
 import Linear
 import FormUtils
 import Data.List (intersperse)
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, maybeToList, listToMaybe)
 import Control.Lens
+import Control.Monad (guard)
 
 
 main :: IO ()
 main =
-    runReactive viewWithSidepanel initialState
+    runReactive (move (V2 400 300) . viewGraphics) initialState
 
 initialState = State
     { mousePos = V2 0 0
     , shiftPressed = False
-    , expression = Let [Assoc "point" (Vector (V2 10 10))] (Pic mempty)
+    , expression = Let [] (Point (V2 10 10)) -- Let [Assoc "point" (Point (V2 10 10))] Hole
     , dragState = NotDragging
+    , selection = []
     }
 
 
--- TODO: Sized reactives
-viewWithSidepanel :: State -> Reactive Input State
-viewWithSidepanel model =
-    mconcat
-        [ viewCode model
-        , move (V2 600 300) (viewGraphics model)
-        ]
-
 data State = State
+    -- input states
     { mousePos :: V2 Double
     , shiftPressed :: Bool
+    -- program state
     , expression :: Let Literal
+    -- editing state
     , dragState :: DragState
+    , selection :: [FocusLet ()]
     }
     deriving Show
 
-data Let a
-    = Let [Assoc a] a
-    deriving (Functor, Show)
-
-data Assoc a = Assoc
-    { name :: String
+data Let a = Let
+    { declarations :: [Declaration a]
     , value :: a
     }
     deriving (Functor, Show)
 
-data Literal
-    = Vector (V2 Double)
-    | Pic Form
+data FocusLet a
+    = FocusDeclaration String a
+    | FocusIn a
+    deriving (Functor, Show)
 
-instance Show Literal where
-    show (Vector v) = show v
-    show (Pic _) = "<form>"
+data Declaration a = Declaration
+    { name :: String
+    , assignment :: a
+    }
+    deriving (Functor, Show)
+
+data Literal
+    = Point (V2 Double)
+    | Hole
+    deriving Show
 
 data DragState
     = NotDragging
-    | DraggingPoint Int (V2 Double)
+    | Dragging (FocusLet ()) (V2 Double)
     deriving Show
+
+
+lookupFocus :: FocusLet b -> Let a -> Maybe a
+lookupFocus focus (Let declarations expression) = case focus of
+    FocusDeclaration focusName a ->
+        assignment <$> listToMaybe (filter ((== focusName) . name) declarations)
+
+    FocusIn inner ->
+        Just expression
+
+
+modifyFocus :: FocusLet b -> (a -> a) -> Let a -> Let a
+modifyFocus focus f (Let declarations expression) = case focus of
+    FocusDeclaration focusName a ->
+        let
+            changeDecl decl =
+                if name decl == focusName then
+                    Declaration (name decl) (f (assignment decl))
+                else
+                    decl
+        in
+        Let (map changeDecl declarations) expression
+
+    FocusIn _ ->
+        Let declarations (f expression)
 
 
 textStyle :: TextStyle
@@ -90,160 +118,123 @@ monoText = text textStyle
 
 
 
--- Rendering
-
-
-renderLets :: Let Literal -> Form
-renderLets (Let definitions body) =
-    let
-        greaterWidth =
-            max (graphicWidth letKeyword) (graphicWidth inKeyword)
-
-        letKeyword =
-            text keywordStyle "let "
-
-        inKeyword =
-            text keywordStyle "in "
-    in
-    appendTo down
-        [ letKeyword <> move (V2 greaterWidth 0) (appendTo down (map (renderAssoc . fmap renderLit) definitions))
-        , inKeyword <> move (V2 greaterWidth 0) (renderLit body)
-        ]
-        
-
-renderLit :: Literal -> Form
-renderLit (Pic form) = form
-renderLit (Vector vec) = renderVec vec
-
-
-renderAssoc :: Assoc Form -> Form
-renderAssoc (Assoc name form) =
-    appendTo right [ monoText name, monoText " = ", form ]
-
-
-renderVec :: V2 Double -> Form
-renderVec (V2 x y) = monoText (show (x, y))
-
-
-renderApp :: Form -> [Form] -> Form
-renderApp func args =
-    appendTo right (intersperse (monoText " ") (func:args))
-
-
-viewGraphicallyScope :: State -> Reactive Input State
-viewGraphicallyScope state =
-    let
-        Let definitions literal = expression state
-    in
-    mconcat (zipWith (viewGraphicallyAssoc state) [0..] definitions)
-
-
-viewGraphicallyAssoc :: State -> Int -> Assoc Literal -> Reactive Input State
-viewGraphicallyAssoc state index (Assoc name (Vector v)) =
-    let
-        grabbingRange = 10
-
-        isInGrabbingRange = distance v (mousePos state) < grabbingRange
-
-        grabbable =
-            outlined (solid lightBlue) (circle 6)
-        
-        nonGrabbable =
-            filled lightBlue (circle 6)
-        
-        Let definitions literal = expression state
-
-        updateAssociation index newAssoc =
-            state { expression = Let (set (element index) newAssoc definitions) literal }
-        
-        handleDragRelease grabPoint pos =
-            (updateAssociation index (Assoc name (Vector (mousePos state - grabPoint))))
-                { dragState = NotDragging }
-
-        handleDragStart pos =
-            state { dragState = DraggingPoint index pos }
-    in
-    case dragState state of
-        NotDragging ->
-            if isInGrabbingRange then
-                move v
-                    (Reactive
-                        ((Event.mousePress . Event.buttonGuard MBLeft) (Just . handleDragStart))
-                        grabbable)
-            else
-                move v (Reactive.static nonGrabbable)
-        
-        DraggingPoint dragIndex grabPoint ->
-            if dragIndex == index then
-                move (mousePos state - grabPoint)
-                    (Reactive
-                        ((Event.mouseRelease . Event.buttonGuard MBLeft) (Just . handleDragRelease grabPoint))
-                        grabbable)
-            else
-                move v (Reactive.static nonGrabbable)
-viewGraphicallyAssoc mousePos index _ = mempty
-
-
-
--- View code
-
-
-viewCode :: State -> Reactive Input State
-viewCode state =
-        Reactive.static (move padding renderedCode <> background)
-    where
-        padding = V2 8 8
-        renderedCode = renderLets (expression state)
-        background = alignHV (0, 0) (filled lightGrey (rectangle 400 600))
-
+-- Update
 
 viewGraphics :: State -> Reactive Input State
 viewGraphics state =
-    Reactive.onEvent
-        (Event.handleChain
-            [ onRelease (\pos -> Just (state { expression = literalActionAt pos (expression state), mousePos = pos }))
-            , onMove (\pos -> Just (state { mousePos = pos }))
-            , Event.keyPress (Event.keyGuard Keys.KeyLShift (Just state { shiftPressed = True }))
-            , Event.keyRelease (Event.keyGuard Keys.KeyLShift (Just state { shiftPressed = False }))
-            ])
-        (mconcat
-            [ viewGraphicallyScope state
-            -- , Reactive.static (renderLit literal)
-            , Reactive.static originCross
-            ])
-    where
-        -- onPress = Event.mousePress . Event.buttonGuard MBLeft
-        onRelease = Event.mouseRelease . Event.buttonGuard MBLeft
-        onMove = Event.mouseMove
-
-        bakePath = outlined (solid darkGrey) . noBorder . openPath
-        line start end = bakePath (pathPoint start `lineConnect` pathPoint end)
-        originCross = line (-100, 0) (100, 0) <> line (0, -100) (0, 100)
-
-
-literalActionAt :: V2 Double -> Let Literal -> Let Literal
-literalActionAt position (Let definitions literal) =
     let
-        points =
-            mapMaybe 
-                (\case
-                    Assoc _ (Vector vector) -> Just vector
-                    _ -> Nothing)
-                definitions
+        scene =
+            viewLet (expression state)
 
-        findDistance index point = (index, distance point position)
+        handlePress pos =
+            case react scene pos of
+                Nothing ->
+                    let
+                        declarationsBefore =
+                            declarations (expression state)
 
-        nearPoints = filter ((< 10) . snd) (zipWith findDistance [0..] points)
+                        addedDeclaration =
+                            Declaration
+                                (makeFreshName "point" (map name declarationsBefore))
+                                (Point pos)
+                    in
+                    Just state
+                        { expression =
+                            Let (declarationsBefore ++ [addedDeclaration]) (value (expression state :: Let Literal))
+                        }
+
+                Just focus ->
+                    case lookupFocus focus (expression state) of
+                        Just (Point position) ->
+                            Just state { dragState = Dragging focus (position - pos) }
+
+                        _ ->
+                            Nothing
+
+        updateDrag pos focus grabOffset =
+            modifyFocus focus
+                (const (Point (pos + grabOffset)))
+                (expression state)
+
+        handleMove pos =
+            case dragState state of
+                NotDragging ->
+                    Nothing
+
+                Dragging focus grabOffset ->
+                    Just state { expression = updateDrag pos focus grabOffset }
+
+        handleRelease pos =
+            case dragState state of
+                NotDragging ->
+                    Nothing
+
+                Dragging focus grabOffset ->
+                    Just state
+                        { expression = updateDrag pos focus grabOffset
+                        , dragState = NotDragging
+                        }
     in
-    if null nearPoints then
-        Let
-            (Assoc
-                (makeFreshName "point" (map name definitions))
-                (Vector position)
-                : definitions)
-            literal
-    else
-        Let definitions literal
+    Reactive
+        (Event.handleChain
+            [ Event.mousePress (Event.buttonGuard MBLeft handlePress)
+            , Event.mouseRelease (Event.buttonGuard MBLeft handleRelease)
+            , Event.mouseMove handleMove
+            ]
+        )
+        (mconcat
+            [ Reactive.visual scene
+            , viewOriginCross
+            ]
+        )
+
+
+
+-- View Pickable Objects
+
+
+viewLet :: Let Literal -> Reactive (V2 Double) (FocusLet ())
+viewLet (Let declarations expression) =
+    mconcat ((FocusIn <$> viewLiteral expression) : map viewDeclarations declarations)
+
+
+viewDeclarations :: Declaration Literal -> Reactive (V2 Double) (FocusLet ())
+viewDeclarations (Declaration name literal) =
+    FocusDeclaration name <$> viewLiteral literal
+
+
+viewLiteral :: Literal -> Reactive (V2 Double) ()
+viewLiteral Hole = mempty
+viewLiteral (Point v) = move v viewCross
+
+
+viewCross :: Reactive (V2 Double) ()
+viewCross =
+    let
+        cross =
+            lineShape <> scale (V2 (-1) 1) lineShape
+
+        lineShape =
+            outlined (solid black) (noBorder (closedPath (pathPoint (-6, -6) `lineConnect` pathPoint (6, 6))))
+    in
+    Reactive
+        (\pickPos -> do
+            guard (norm pickPos < norm (V2 6 6))
+            return ()
+        )
+        cross
+
+viewOriginCross :: Form
+viewOriginCross =
+    let
+        bakePath =
+            outlined (solid darkGrey) . noBorder . openPath
+
+        line start end =
+            bakePath (pathPoint start `lineConnect` pathPoint end)
+    in
+    line (-100, 0) (100, 0) <> line (0, -100) (0, 100)
+
 
 -- λ> makeFreshName "point" ["point1", "point2"]
 -- "point3"
@@ -252,7 +243,7 @@ makeFreshName base names =
     let
         freshNames =
             map ((base ++) . show) [1..]
-    
+
         isFresh =
             not . (`elem` names)
     in
