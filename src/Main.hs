@@ -1,5 +1,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 module Main where
 
 import Graphics.Declarative.Transforms
@@ -9,6 +11,7 @@ import Graphics.Declarative.Cairo.TangoColors
 import Graphics.Declarative.Cairo.Form
 import Graphics.Declarative.Cairo.Shape
 import Graphics.Declarative.SDL.Input
+import qualified Graphics.Declarative.SDL.Keys as Keys
 
 import qualified Reactive
 import Reactive (Reactive(..))
@@ -54,7 +57,10 @@ data Let a
     = Let [Assoc a] a
     deriving (Functor, Show)
 
-data Assoc a = Assoc String a
+data Assoc a = Assoc
+    { name :: String
+    , value :: a
+    }
     deriving (Functor, Show)
 
 data Literal
@@ -89,15 +95,21 @@ monoText = text textStyle
 
 renderLets :: Let Literal -> Form
 renderLets (Let definitions body) =
-        appendTo down
-            [ letKeyword <> move (V2 greaterWidth 0) (appendTo down (map (renderAssoc . fmap renderLit) definitions))
-            , inKeyword <> move (V2 greaterWidth 0) (renderLit body)
-            ]
-    where
-        greaterWidth = max (graphicWidth letKeyword) (graphicWidth inKeyword)
-        letKeyword = text keywordStyle "let "
-        inKeyword = text keywordStyle "in "
+    let
+        greaterWidth =
+            max (graphicWidth letKeyword) (graphicWidth inKeyword)
 
+        letKeyword =
+            text keywordStyle "let "
+
+        inKeyword =
+            text keywordStyle "in "
+    in
+    appendTo down
+        [ letKeyword <> move (V2 greaterWidth 0) (appendTo down (map (renderAssoc . fmap renderLit) definitions))
+        , inKeyword <> move (V2 greaterWidth 0) (renderLit body)
+        ]
+        
 
 renderLit :: Literal -> Form
 renderLit (Pic form) = form
@@ -191,6 +203,8 @@ viewGraphics state =
         (Event.handleChain
             [ onRelease (\pos -> Just (state { expression = literalActionAt pos (expression state), mousePos = pos }))
             , onMove (\pos -> Just (state { mousePos = pos }))
+            , Event.keyPress (Event.keyGuard Keys.KeyLShift (Just state { shiftPressed = True }))
+            , Event.keyRelease (Event.keyGuard Keys.KeyLShift (Just state { shiftPressed = False }))
             ])
         (mconcat
             [ viewGraphicallyScope state
@@ -222,6 +236,24 @@ literalActionAt position (Let definitions literal) =
         nearPoints = filter ((< 10) . snd) (zipWith findDistance [0..] points)
     in
     if null nearPoints then
-        Let (Assoc "point" (Vector position) : definitions) literal
+        Let
+            (Assoc
+                (makeFreshName "point" (map name definitions))
+                (Vector position)
+                : definitions)
+            literal
     else
         Let definitions literal
+
+-- λ> makeFreshName "point" ["point1", "point2"]
+-- "point3"
+makeFreshName :: String -> [String] -> String
+makeFreshName base names =
+    let
+        freshNames =
+            map ((base ++) . show) [1..]
+    
+        isFresh =
+            not . (`elem` names)
+    in
+    head (filter isFresh freshNames)
